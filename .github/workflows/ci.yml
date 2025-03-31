@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm-slim
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up environment
+        run: |
+          apt-get update
+          apt-get -y install ca-certificates buildah
+          apt-get -y install --no-install-recommends iptables
+          update-alternatives --set iptables /usr/sbin/iptables-legacy
+
+      - name: Build with Buildah
+        run: buildah build --file build.Containerfile --output build .
+
+      - name: Calculate checksums
+        run: sha256sum build/core/* build/wallettool/bin/* build/wallettool/lib/*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: bitcoinj-reference-${{ github.job }}-${{ github.sha }}
+          path: build/**
+
+  bookworm-jdk17:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm-slim
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up environment
+        run: |
+          apt-get update
+          apt-get -y install openjdk-17-jdk-headless gradle
+
+      - name: Build with Gradle
+        run: gradle --settings-file settings-debian.gradle build :bitcoinj-base:publishToMavenLocal :bitcoinj-core:publishToMavenLocal :bitcoinj-wallettool:installDist --init-script build-scan-agree.gradle
+
+      - name: Gradle version
+        run: gradle --version
+
+      - name: Calculate checksums
+        run: sha256sum core/build/libs/*.jar wallettool/build/install/wallet-tool/bin/* wallettool/build/install/wallet-tool/lib/*.jar
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: bitcoinj-bookworm-jdk17-${{ github.job }}-${{ github.sha }}
+          path: |
+            core/build/libs/*.jar
+            wallettool/build/install/wallet-tool/bin/*
+            wallettool/build/install/wallet-tool/lib/*.jar
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run SAST
+        uses: github/codeql-action/init@v2
+        with:
+          languages: java
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
